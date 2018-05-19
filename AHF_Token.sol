@@ -1,29 +1,6 @@
 pragma solidity ^0.4.24;
 
 // ----------------------------------------------------------------------------
-// Safe maths
-// ----------------------------------------------------------------------------
-library SafeMath {
-    function add(uint a, uint b) internal pure returns (uint c) {
-        c = a + b;
-        require(c >= a);
-    }
-    function sub(uint a, uint b) internal pure returns (uint c) {
-        require(b <= a);
-        c = a - b;
-    }
-    function mul(uint a, uint b) internal pure returns (uint c) {
-        c = a * b;
-        require(a == 0 || c / a == b);
-    }
-    function div(uint a, uint b) internal pure returns (uint c) {
-        require(b > 0);
-        c = a / b;
-    }
-}
-
-
-// ----------------------------------------------------------------------------
 // ERC Token Standard #20 Interface
 // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-20-token-standard.md
 // ----------------------------------------------------------------------------
@@ -46,9 +23,8 @@ contract ERC20Interface {
 // Borrowed from MiniMeToken
 // ----------------------------------------------------------------------------
 contract ApproveAndCallFallBack {
-    function receiveApproval(address from, uint256 tokens, address token, bytes data) public;
+    function receiveApproval(address from, uint256 _amount, address _token, bytes _data) public;
 }
-
 
 // ----------------------------------------------------------------------------
 // Owned contract
@@ -83,96 +59,79 @@ contract Owned {
 // ----------------------------------------------------------------------------
 // Dividends implementation interface
 // ----------------------------------------------------------------------------
-contract DividendsImplementationInterface {
+contract DividendsDistributor is Owned {
+    address public tokenContract;
+
+    modifier onlyTokenContract {
+        require(msg.sender == tokenContract);
+        _;
+    }
+
+    function setTokenContract(address _newTokenContract) public onlyOwner {
+        tokenContract = _newTokenContract;
+    }
+
     function totalDividends() public constant returns (uint);
     function totalUndistributedDividends() public constant returns (uint);
     function totalDistributedDividends() public constant returns (uint);
     function totalPaidDividends() public constant returns (uint);
-    function dividendsBalanceOf(address tokenOwner) public constant returns (uint);
-    function distributeDividendsOnTransferFrom(address from, address to, uint tokens) public returns (uint from_dividends, uint to_dividends);
-    function withdrawDividends(address tokenOwner) public returns(uint dividends);
-}
-
-// ----------------------------------------------------------------------------
-// Dividends support interface
-// ----------------------------------------------------------------------------
-contract DividendsSupportInterface {
-    address public dividendsImpl;
-
-    function totalDividends() public constant returns (uint) {
-        if (dividendsImpl != address(0)) {
-            return DividendsImplementationInterface(dividendsImpl).totalDividends();
-        }
-        return 0;
-    }
-    function totalUndistributedDividends() public constant returns (uint) {
-        if (dividendsImpl != address(0)) {
-            return DividendsImplementationInterface(dividendsImpl).totalUndistributedDividends();
-        }
-        return 0;
-    }
-    function totalDistributedDividends() public constant returns (uint) {
-        if (dividendsImpl != address(0)) {
-            return DividendsImplementationInterface(dividendsImpl).totalDistributedDividends();
-        }
-        return 0;
-    }
-    function totalPaidDividends() public constant returns (uint) {
-        if (dividendsImpl != address(0)) {
-            return DividendsImplementationInterface(dividendsImpl).totalPaidDividends();
-        }
-        return 0;
-    }
-    function dividendsBalanceOf(address tokenOwner) public constant returns (uint) {
-        if (dividendsImpl != address(0)) {
-            return DividendsImplementationInterface(dividendsImpl).dividendsBalanceOf(tokenOwner);
-        }
-        return 0;
-    }
-    function distributeDividendsOnTransferFrom(address from, address to, uint tokens) public {
-        if (dividendsImpl != address(0)) {
-            (uint from_dividends, uint to_dividends) = DividendsImplementationInterface(dividendsImpl).distributeDividendsOnTransferFrom(from, to, tokens);
-            emit DividendsDistributed(from, from_dividends);
-            emit DividendsDistributed(to, to_dividends);
-        }
-    }
-    function withdrawDividends() public {
-        if (dividendsImpl != address(0)) {
-            uint dividends = DividendsImplementationInterface(dividendsImpl).withdrawDividends(msg.sender);
-            emit DividendsPaid(msg.sender, dividends);
-        }
-    }
+    function balanceOf(address tokenOwner) public constant returns (uint balance);
+    function distributeDividendsOnTransferFrom(address from, address to, uint tokens) public returns (bool success);
+    function withdrawDividends() public returns(bool success);
 
     event DividendsDistributed(address indexed tokenOwner, uint dividends);
     event DividendsPaid(address indexed tokenOwner, uint dividends);
+}
+
+/// @dev The token controller contract must implement these functions
+contract TokenController {
+    /// @notice Notifies the controller about a token transfer allowing the
+    ///  controller to react if desired
+    /// @param _from The origin of the transfer
+    /// @param _to The destination of the transfer
+    /// @param _amount The amount of the transfer
+    /// @return False if the controller does not authorize the transfer
+    function onTransfer(address _from, address _to, uint _amount) public returns(bool);
+
+    /// @notice Notifies the controller about an approval allowing the
+    ///  controller to react if desired
+    /// @param _owner The address that calls `approve()`
+    /// @param _spender The spender in the `approve()` call
+    /// @param _amount The amount in the `approve()` call
+    /// @return False if the controller does not authorize the approval
+    function onApprove(address _owner, address _spender, uint _amount) public returns(bool);
 }
 
 // ----------------------------------------------------------------------------
 // ERC20 Token, with the addition of symbol, name and decimals and an
 // initial fixed supply
 // ----------------------------------------------------------------------------
-contract AHF_Token is ERC20Interface, Owned, DividendsSupportInterface {
-    using SafeMath for uint;
-
+contract AHF_Token is ERC20Interface, Owned {
     string public constant symbol = "AHF";
     string public constant name = "Ahedgefund Token";
     uint8 public constant decimals = 18;
-    uint public constant _totalSupply = 130000000 * 10**uint(decimals);
+    uint private constant _totalSupply = 130000000 * 10**uint(decimals);
 
     mapping(address => uint) balances;
     mapping(address => mapping(address => uint)) allowed;
 
+    address public dividendsDistributor;
+    address public controller;
+    
+    // Flag that determines if the token is transferable or not.
+    bool public transfersEnabled;
     // ------------------------------------------------------------------------
     // Constructor
     // ------------------------------------------------------------------------
     constructor() public {
         balances[owner] = _totalSupply;
+        transfersEnabled = true;
         emit Transfer(address(0), owner, _totalSupply);
     }
 
 
-    function newDividendsImpl(DividendsSupportInterface newImpl) public onlyOwner {
-        dividendsImpl = newImpl;
+    function setDividendsDistributor(address _newDividendsDistributor) public onlyOwner {
+        dividendsDistributor = _newDividendsDistributor;
     }
 
     // ------------------------------------------------------------------------
@@ -186,22 +145,8 @@ contract AHF_Token is ERC20Interface, Owned, DividendsSupportInterface {
     // ------------------------------------------------------------------------
     // Get the token balance for account `tokenOwner`
     // ------------------------------------------------------------------------
-    function balanceOf(address tokenOwner) public constant returns (uint) {
+    function balanceOf(address tokenOwner) public constant returns (uint balance) {
         return balances[tokenOwner];
-    }
-
-
-    // ------------------------------------------------------------------------
-    // Transfer the balance from token owner's account to `to` account
-    // - Owner's account must have sufficient balance to transfer
-    // - 0 value transfers are allowed
-    // ------------------------------------------------------------------------
-    function transfer(address to, uint tokens) public returns (bool) {
-        balances[msg.sender] = balances[msg.sender].sub(tokens);
-        balances[to] = balances[to].add(tokens);
-        emit Transfer(msg.sender, to, tokens);
-        distributeDividendsOnTransferFrom(msg.sender, to, tokens);
-        return true;
     }
 
 
@@ -213,9 +158,43 @@ contract AHF_Token is ERC20Interface, Owned, DividendsSupportInterface {
     // recommends that there are no checks for the approval double-spend attack
     // as this should be implemented in user interfaces 
     // ------------------------------------------------------------------------
-    function approve(address spender, uint tokens) public returns (bool) {
-        allowed[msg.sender][spender] = tokens;
-        emit Approval(msg.sender, spender, tokens);
+    function approve(address _spender, uint _amount) public returns (bool success) {
+        require(transfersEnabled);
+
+        // To change the approve amount you first have to reduce the addresses`
+        //  allowance to zero by calling `approve(_spender,0)` if it is not
+        //  already 0 to mitigate the race condition described here:
+        //  https://github.com/ethereum/EIPs/issues/20#issuecomment-263524729
+        require((_amount == 0) || (allowed[msg.sender][_spender] == 0));
+
+        // Alerts the token controller of the approve function call
+        if (isContract(controller)) {
+            require(TokenController(controller).onApprove(msg.sender, _spender, _amount));
+        }
+
+        allowed[msg.sender][_spender] = _amount;
+        emit Approval(msg.sender, _spender, _amount);
+        return true;
+    }
+
+
+    // ------------------------------------------------------------------------
+    // Returns the amount of tokens approved by the owner that can be
+    // transferred to the spender's account
+    // ------------------------------------------------------------------------
+    function allowance(address tokenOwner, address spender) public constant returns (uint remaining) {
+        return allowed[tokenOwner][spender];
+    }
+
+
+    // ------------------------------------------------------------------------
+    // Transfer the balance from token owner's account to `to` account
+    // - Owner's account must have sufficient balance to transfer
+    // - 0 value transfers are allowed
+    // ------------------------------------------------------------------------
+    function transfer(address _to, uint _amount) public returns (bool success) {
+        require(transfersEnabled);
+        doTransfer(msg.sender, _to, _amount);
         return true;
     }
 
@@ -229,37 +208,44 @@ contract AHF_Token is ERC20Interface, Owned, DividendsSupportInterface {
     // - Spender must have sufficient allowance to transfer
     // - 0 value transfers are allowed
     // ------------------------------------------------------------------------
-    function transferFrom(address from, address to, uint tokens) public returns (bool) {
-        balances[from] = balances[from].sub(tokens);
-        allowed[from][msg.sender] = allowed[from][msg.sender].sub(tokens);
-        balances[to] = balances[to].add(tokens);
-        emit Transfer(from, to, tokens);
-        distributeDividendsOnTransferFrom(from, to, tokens);
+    function transferFrom(address _from, address _to, uint _amount) public returns (bool success) {
+
+        // The controller of this contract can move tokens around at will,
+        //  this is important to recognize! Confirm that you trust the
+        //  controller of this contract, which in most situations should be
+        //  another open source smart contract or 0x0
+        if (msg.sender != controller) {
+            require(transfersEnabled);
+
+            // The standard ERC 20 transferFrom functionality
+            require(allowed[_from][msg.sender] >= _amount);
+            allowed[_from][msg.sender] -= _amount;
+        }
+        doTransfer(_from, _to, _amount);
         return true;
     }
 
 
-    // ------------------------------------------------------------------------
-    // Returns the amount of tokens approved by the owner that can be
-    // transferred to the spender's account
-    // ------------------------------------------------------------------------
-    function allowance(address tokenOwner, address spender) public constant returns (uint) {
-        return allowed[tokenOwner][spender];
-    }
+    /// @notice `msg.sender` approves `_spender` to send `_amount` tokens on
+    ///  its behalf, and then a function is triggered in the contract that is
+    ///  being approved, `_spender`. This allows users to use their tokens to
+    ///  interact with contracts in one function call instead of two
+    /// @param _spender The address of the contract able to transfer the tokens
+    /// @param _amount The amount of tokens to be approved for transfer
+    /// @return True if the function call was successful
+    function approveAndCall(address _spender, uint256 _amount, bytes _extraData
+    ) public returns (bool success) {
+        require(approve(_spender, _amount));
 
+        ApproveAndCallFallBack(_spender).receiveApproval(
+            msg.sender,
+            _amount,
+            this,
+            _extraData
+        );
 
-    // ------------------------------------------------------------------------
-    // Token owner can approve for `spender` to transferFrom(...) `tokens`
-    // from the token owner's account. The `spender` contract function
-    // `receiveApproval(...)` is then executed
-    // ------------------------------------------------------------------------
-    function approveAndCall(address spender, uint tokens, bytes data) public returns (bool) {
-        allowed[msg.sender][spender] = tokens;
-        emit Approval(msg.sender, spender, tokens);
-        ApproveAndCallFallBack(spender).receiveApproval(msg.sender, tokens, this, data);
         return true;
     }
-
 
     // ------------------------------------------------------------------------
     // Don't accept ETH
@@ -269,10 +255,65 @@ contract AHF_Token is ERC20Interface, Owned, DividendsSupportInterface {
     }
 
 
-    // ------------------------------------------------------------------------
-    // Owner can transfer out any accidentally sent ERC20 tokens
-    // ------------------------------------------------------------------------
-    function transferAnyERC20Token(address tokenAddress, uint tokens) public onlyOwner returns (bool) {
-        return ERC20Interface(tokenAddress).transfer(owner, tokens);
+    /// @dev This is the actual transfer function in the token contract, it can
+    ///  only be called by other functions in this contract.
+    /// @param _from The address holding the tokens being transferred
+    /// @param _to The address of the recipient
+    /// @param _amount The amount of tokens to be transferred
+    /// @return True if the transfer was successful
+    function doTransfer(address _from, address _to, uint _amount) internal {
+           if (_amount == 0) {
+               emit Transfer(_from, _to, _amount);    // Follow the spec to louch the event when transfer 0
+               return;
+           }
+
+           // Do not allow transfer to 0x0 or the token contract itself
+           require((_to != 0) && (_to != address(this)));
+
+           // If the amount being transfered is more than the balance of the
+           //  account the transfer throws
+           uint previousBalanceFrom = balanceOf(_from);
+
+           require(previousBalanceFrom >= _amount);
+
+           // Alerts the token controller of the transfer
+           if (isContract(controller)) {
+               require(TokenController(controller).onTransfer(_from, _to, _amount));
+           }
+
+           // First update the balance array with the new value for the address
+           //  sending the tokens
+           balances[_from] = previousBalanceFrom - _amount;
+
+           // Then update the balance array with the new value for the address
+           //  receiving the tokens
+           uint previousBalanceTo = balanceOf(_to);
+           require(previousBalanceTo + _amount >= previousBalanceTo); // Check for overflow
+           balances[_to] = previousBalanceTo + _amount;
+
+           // An event to make the transfer easy to find on the blockchain
+           emit Transfer(_from, _to, _amount);
+           
+           if (isContract(dividendsDistributor)) {
+                require(DividendsDistributor(dividendsDistributor).distributeDividendsOnTransferFrom(_from, _to, _amount));
+            }
+    }
+
+    /// @notice Enables token holders to transfer their tokens freely if true
+    /// @param _transfersEnabled True if transfers are allowed in the clone
+    function enableTransfers(bool _transfersEnabled) public onlyOwner {
+        transfersEnabled = _transfersEnabled;
+    }
+
+    /// @dev Internal function to determine if an address is a contract
+    /// @param _addr The address being queried
+    /// @return True if `_addr` is a contract
+    function isContract(address _addr) constant internal returns(bool) {
+        uint size;
+        if (_addr == 0) return false;
+        assembly {
+            size := extcodesize(_addr)
+        }
+        return size>0;
     }
 }
