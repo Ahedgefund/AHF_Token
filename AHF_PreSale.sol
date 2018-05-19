@@ -13,15 +13,21 @@ contract AHF_PreSale is Owned {
     uint public totalCollected;         // In wei
     uint public tokenPrice;         // In wei
 
-    // ------------------------------------------------------------------------
-    // Constructor
-    // ------------------------------------------------------------------------
-    constructor(address _tokenAddress, address _vaultAddress) public {
+    function setTokenAddress(address _tokenAddress) public onlyOwner {
         tokenContract = ERC20Interface(_tokenAddress);
-        vaultAddress = _vaultAddress;
-        fundingEnabled = true;
+        return;
     }
-    
+
+    function setVaultAddress(address _vaultAddress) public onlyOwner {
+        vaultAddress = _vaultAddress;
+        return;
+    }
+
+    function setFundingEnabled(bool _fundingEnabled) public onlyOwner {
+        fundingEnabled = _fundingEnabled;
+        return;
+    }
+
     function updateTokenPrice(uint _newTokenPrice) public onlyOwner {
         tokenPrice = _newTokenPrice;
         return;
