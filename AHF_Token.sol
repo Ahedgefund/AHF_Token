@@ -1,21 +1,9 @@
 pragma solidity ^0.4.24;
 
-// ----------------------------------------------------------------------------
-// ERC Token Standard #20 Interface
-// https://github.com/ethereum/EIPs/blob/master/EIPS/eip-20-token-standard.md
-// ----------------------------------------------------------------------------
-contract ERC20Interface {
-    function totalSupply() public constant returns (uint);
-    function balanceOf(address tokenOwner) public constant returns (uint balance);
-    function allowance(address tokenOwner, address spender) public constant returns (uint remaining);
-    function transfer(address to, uint tokens) public returns (bool success);
-    function approve(address spender, uint tokens) public returns (bool success);
-    function transferFrom(address from, address to, uint tokens) public returns (bool success);
-
-    event Transfer(address indexed from, address indexed to, uint tokens);
-    event Approval(address indexed tokenOwner, address indexed spender, uint tokens);
-}
-
+import "./ERC20Interface.sol";
+import "./Owned.sol";
+import "./DividendsDistributor.sol";
+import "./TokenController.sol";
 
 // ----------------------------------------------------------------------------
 // Contract function to receive approval and execute function in one call
@@ -24,82 +12,6 @@ contract ERC20Interface {
 // ----------------------------------------------------------------------------
 contract ApproveAndCallFallBack {
     function receiveApproval(address from, uint256 _amount, address _token, bytes _data) public;
-}
-
-// ----------------------------------------------------------------------------
-// Owned contract
-// ----------------------------------------------------------------------------
-contract Owned {
-    address public owner;
-    address public newOwner;
-
-    event OwnershipTransferred(address indexed _from, address indexed _to);
-
-    constructor() public {
-        owner = msg.sender;
-    }
-
-    modifier onlyOwner {
-        require(msg.sender == owner);
-        _;
-    }
-
-    function transferOwnership(address _newOwner) public onlyOwner {
-        newOwner = _newOwner;
-    }
-
-    function acceptOwnership() public {
-        require(msg.sender == newOwner);
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
-        newOwner = address(0);
-    }
-}
-
-// ----------------------------------------------------------------------------
-// Dividends implementation interface
-// ----------------------------------------------------------------------------
-contract DividendsDistributor is Owned {
-    address public tokenContract;
-
-    modifier onlyTokenContract {
-        require(msg.sender == tokenContract);
-        _;
-    }
-
-    function setTokenContract(address _newTokenContract) public onlyOwner {
-        tokenContract = _newTokenContract;
-    }
-
-    function totalDividends() public constant returns (uint);
-    function totalUndistributedDividends() public constant returns (uint);
-    function totalDistributedDividends() public constant returns (uint);
-    function totalPaidDividends() public constant returns (uint);
-    function balanceOf(address tokenOwner) public constant returns (uint balance);
-    function distributeDividendsOnTransferFrom(address from, address to, uint tokens) public returns (bool success);
-    function withdrawDividends() public returns(bool success);
-
-    event DividendsDistributed(address indexed tokenOwner, uint dividends);
-    event DividendsPaid(address indexed tokenOwner, uint dividends);
-}
-
-/// @dev The token controller contract must implement these functions
-contract TokenController {
-    /// @notice Notifies the controller about a token transfer allowing the
-    ///  controller to react if desired
-    /// @param _from The origin of the transfer
-    /// @param _to The destination of the transfer
-    /// @param _amount The amount of the transfer
-    /// @return False if the controller does not authorize the transfer
-    function onTransfer(address _from, address _to, uint _amount) public returns(bool);
-
-    /// @notice Notifies the controller about an approval allowing the
-    ///  controller to react if desired
-    /// @param _owner The address that calls `approve()`
-    /// @param _spender The spender in the `approve()` call
-    /// @param _amount The amount in the `approve()` call
-    /// @return False if the controller does not authorize the approval
-    function onApprove(address _owner, address _spender, uint _amount) public returns(bool);
 }
 
 // ----------------------------------------------------------------------------
@@ -161,15 +73,9 @@ contract AHF_Token is ERC20Interface, Owned {
     function approve(address _spender, uint _amount) public returns (bool success) {
         require(transfersEnabled);
 
-        // To change the approve amount you first have to reduce the addresses`
-        //  allowance to zero by calling `approve(_spender,0)` if it is not
-        //  already 0 to mitigate the race condition described here:
-        //  https://github.com/ethereum/EIPs/issues/20#issuecomment-263524729
-        require((_amount == 0) || (allowed[msg.sender][_spender] == 0));
-
         // Alerts the token controller of the approve function call
         if (isContract(controller)) {
-            require(TokenController(controller).onApprove(msg.sender, _spender, _amount));
+            require(TokenController(controller).onApprove(msg.sender, _spender, allowed[msg.sender][_spender], _amount));
         }
 
         allowed[msg.sender][_spender] = _amount;
