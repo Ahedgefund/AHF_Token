@@ -20,7 +20,7 @@ contract ApproveAndCallFallBack {
 // ----------------------------------------------------------------------------
 contract AHF_Token is ERC20Interface, Owned {
     string public constant symbol = "AHF";
-    string public constant name = "Ahedgefund Token";
+    string public constant name = "Ahedgefund Sagl Token";
     uint8 public constant decimals = 18;
     uint private constant _totalSupply = 130000000 * 10**uint(decimals);
 
