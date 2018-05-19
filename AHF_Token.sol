@@ -121,18 +121,11 @@ contract AHF_Token is ERC20Interface, Owned {
     // - 0 value transfers are allowed
     // ------------------------------------------------------------------------
     function transferFrom(address _from, address _to, uint _amount) public returns (bool success) {
+        require(transfersEnabled);
 
-        // The controller of this contract can move tokens around at will,
-        //  this is important to recognize! Confirm that you trust the
-        //  controller of this contract, which in most situations should be
-        //  another open source smart contract or 0x0
-        if (msg.sender != controller) {
-            require(transfersEnabled);
-
-            // The standard ERC 20 transferFrom functionality
-            require(allowed[_from][msg.sender] >= _amount);
-            allowed[_from][msg.sender] -= _amount;
-        }
+        // The standard ERC 20 transferFrom functionality
+        require(allowed[_from][msg.sender] >= _amount);
+        allowed[_from][msg.sender] -= _amount;
         doTransfer(_from, _to, _amount);
         return true;
     }
@@ -228,4 +221,22 @@ contract AHF_Token is ERC20Interface, Owned {
         }
         return size>0;
     }
+
+    /// @notice This method can be used by the owner to extract mistakenly
+    ///  sent tokens to this contract.
+    /// @param _token The address of the token contract that you want to recover
+    ///  set to 0 in case you want to extract ether.
+    function claimTokens(address _token) public onlyOwner {
+        if (_token == 0x0) {
+            owner.transfer(address(this).balance);
+            return;
+        }
+
+        ERC20Interface token = ERC20Interface(_token);
+        uint balance = token.balanceOf(this);
+        token.transfer(owner, balance);
+        emit ClaimedTokens(_token, owner, balance);
+    }
+    
+    event ClaimedTokens(address indexed _token, address indexed _controller, uint _amount);
 }
