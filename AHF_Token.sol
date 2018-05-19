@@ -46,6 +46,12 @@ contract AHF_Token is ERC20Interface, Owned {
         dividendsDistributor = _newDividendsDistributor;
     }
 
+    /// @notice Changes the controller of the contract
+    /// @param _newController The new controller of the contract
+    function setController(address _newController) public onlyOwner {
+        controller = _newController;
+    }
+    
     // ------------------------------------------------------------------------
     // Total supply
     // ------------------------------------------------------------------------
